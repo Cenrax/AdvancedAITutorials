@@ -46,7 +46,7 @@ TOPICS = [
 def get_response(prompt):
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
-        temperature=0.7,
+        temperature=0.8,
         messages=[
             {"role": "system", "content": "You are a helpful assistant skilled in creating realistic dialogues."},
             {"role": "user", "content": prompt}
