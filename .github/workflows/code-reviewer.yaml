@@ -1,4 +1,4 @@
-name: AI CODE Review
+name: OpenAI Code Review
 
 on:
   pull_request:
@@ -35,16 +35,80 @@ jobs:
     - name: Analyze code changes
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |
         python - <<EOF
         import os
         import openai
         from openai import OpenAI
         import json
+        import requests
+        from typing import List, Dict, Tuple
 
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
-        def analyze_code(file_content):
+        def get_file_diff(file_path: str) -> List[Dict]:
+            headers = {
+                'Authorization': f"token {os.getenv('GITHUB_TOKEN')}",
+                'Accept': 'application/vnd.github.v3.diff'
+            }
+            
+            url = f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/pulls/{os.getenv('PR_NUMBER')}/files"
+            response = requests.get(url, headers=headers)
+            files = response.json()
+            
+            for file in files:
+                if file['filename'] == file_path:
+                    return parse_diff(file['patch'])
+            return []
+
+        def parse_diff(patch: str) -> List[Dict]:
+            changes = []
+            current_line = 0
+            
+            for line in patch.split('\n'):
+                if line.startswith('@@'):
+                    parts = line.split(' ')[1]
+                    current_line = int(parts.split(',')[0].replace('+', ''))
+                elif line.startswith('+'):
+                    if not line.startswith('+++'):
+                        changes.append({
+                            'line_number': current_line,
+                            'content': line[1:]
+                        })
+                    current_line += 1
+                elif not line.startswith('-'):
+                    current_line += 1
+            
+            return changes
+
+        def analyze_code_segment(content: str) -> List[str]:
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": """
+                        You are a code review assistant. For the given code segment, provide:
+                        - Specific issues or potential bugs
+                        - Suggestions for improvement
+                        - Best practices that should be applied
+                        
+                        Provide concise, actionable feedback that fits in a GitHub comment.
+                        Each suggestion should be a separate comment.
+                        Keep each comment under 200 characters when possible.
+                        """},
+                        {"role": "user", "content": f"Review this code segment:\n\n{content}"}
+                    ],
+                    max_tokens=1000
+                )
+                
+                comments = [c.strip() for c in response.choices[0].message.content.split('\n') if c.strip()]
+                return comments
+            except Exception as e:
+                return [f"Error analyzing code: {str(e)}"]
+
+        def analyze_full_file(file_content: str) -> str:
             try:
                 response = client.chat.completions.create(
                     model="gpt-4o-mini",
@@ -57,7 +121,7 @@ jobs:
                         - Code style and best practices
                         - Possible optimizations
                         
-                        Provide specific, actionable feedback.
+                        Provide specific, actionable feedback with a high-level overview.
                         """},
                         {"role": "user", "content": f"Please review this code:\n\n{file_content}"}
                     ],
@@ -67,26 +131,80 @@ jobs:
             except Exception as e:
                 return f"Error analyzing code: {str(e)}"
 
-        def create_review_comment(filename, content):
+        def create_inline_review(owner: str, repo: str, pr_number: int, 
+                               comments: List[Tuple[str, int, str]]):
+            headers = {
+                'Authorization': f"token {os.getenv('GITHUB_TOKEN')}",
+                'Accept': 'application/vnd.github.v3+json'
+            }
+            
+            review_comments = []
+            for file_path, line_number, body in comments:
+                review_comments.append({
+                    'path': file_path,
+                    'line': line_number,
+                    'body': body
+                })
+            
+            data = {
+                'commit_id': os.getenv('GITHUB_SHA'),
+                'event': 'COMMENT',
+                'comments': review_comments
+            }
+            
+            url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/reviews"
+            response = requests.post(url, headers=headers, json=data)
+            
+            if response.status_code != 200:
+                print(f"Error creating review: {response.text}")
+
+        def create_review_comment(filename: str, content: str) -> str:
             review = f"## Code Analysis for {filename}\n\n{content}\n\n---\n"
             return review
 
+        # Main execution
         with open('changed_files.txt', 'r') as f:
             changed_files = f.read().splitlines()
 
-        full_review = ""
-        
+        repo_parts = os.getenv('GITHUB_REPOSITORY').split('/')
+        owner, repo = repo_parts[0], repo_parts[1]
+        pr_number = int(os.getenv('PR_NUMBER'))
+
+        # For inline comments
+        all_inline_comments = []
+        # For overall PR comment
+        full_review = "# Code Review Summary\n\n"
+
         for file in changed_files:
             if file.endswith(('.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.cs')):
                 try:
+                    # Get file content for overall analysis
                     with open(file, 'r') as f:
                         content = f.read()
-                        analysis = analyze_code(content)
-                        full_review += create_review_comment(file, analysis)
+                        
+                    # Get changes for inline comments
+                    changes = get_file_diff(file)
+                    
+                    # Process inline comments
+                    for change in changes:
+                        comments = analyze_code_segment(change['content'])
+                        for comment in comments:
+                            all_inline_comments.append((file, change['line_number'], comment))
+                    
+                    # Process overall file analysis
+                    analysis = analyze_full_file(content)
+                    full_review += create_review_comment(file, analysis)
+                    
                 except Exception as e:
-                    full_review += f"\nError reading {file}: {str(e)}\n"
+                    error_msg = f"\nError processing {file}: {str(e)}\n"
+                    full_review += error_msg
+                    print(error_msg)
 
-        # Write the review to a file
+        # Create the inline review comments
+        if all_inline_comments:
+            create_inline_review(owner, repo, pr_number, all_inline_comments)
+
+        # Write the overall review to a file
         with open('code_review.md', 'w') as f:
             f.write(full_review)
         EOF
@@ -98,9 +216,18 @@ jobs:
           const fs = require('fs');
           const review = fs.readFileSync('code_review.md', 'utf8');
           
-          await github.rest.issues.createComment({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-            body: review
-          });
+          // Split review into chunks if it's too long
+          const MAX_COMMENT_LENGTH = 65536;
+          const chunks = review.match(new RegExp(`.{1,${MAX_COMMENT_LENGTH}}`, 'g')) || [];
+          
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            const header = i === 0 ? '' : `\n\n[Continued from previous comment - Part ${i + 1}]\n\n`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: header + chunk
+            });
+          }
