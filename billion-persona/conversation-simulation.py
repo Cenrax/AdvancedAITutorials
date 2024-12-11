@@ -77,6 +77,8 @@ def main(args):
     # Load personas
     personas = load_personas(args.input_file)
     print(f"Loaded {len(personas)} personas")
+
+    print("Testing Testing")
     
     # Generate conversation pairs
     conversation_pairs = []
