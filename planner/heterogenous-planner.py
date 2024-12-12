@@ -283,7 +283,7 @@ async def main():
     try:
         logger.info("Starting planning process...")
         result = await orchestrator.create_comprehensive_plan(task)
-        
+        print("Testing")
         logger.info("\n=== Planning Results ===")
         
         logger.info("\n1. Task Decomposition:")
