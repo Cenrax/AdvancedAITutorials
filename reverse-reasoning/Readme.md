@@ -2,6 +2,84 @@
 
 This repository implements bidirectional reasoning for Large Language Models, inspired by the research paper "Reverse Thinking Makes LLMs Stronger Reasoners" (UNC Chapel Hill & Google Research). The implementation demonstrates how LLMs can validate their reasoning by thinking both forward and backward, similar to human problem-solving processes.
 
+## Extended Architecture Diagram
+
+```mermaid
+flowchart TB
+    subgraph Client["Client Layer"]
+        UI[User Interface]
+        API[API Endpoints]
+    end
+
+    subgraph Core["Core Processing Layer"]
+        direction TB
+        QP[Question Processor]
+        ES[Embedding Service]
+        RS[Reasoning Service]
+        VS[Verification Service]
+    end
+
+    subgraph Models["Model Layer"]
+        GPT4[GPT-4 Teacher Model]
+        ADA[ADA Embeddings Model]
+        GPT4T[GPT-4 Turbo Student Model]
+    end
+
+    subgraph Storage["Storage Layer"]
+        VStore[Vector Store]
+        QStore[Question Store]
+        RStore[Reasoning Chain Store]
+    end
+
+    subgraph External["External Services"]
+        OpenAI[OpenAI API]
+    end
+
+    %% Client Layer Connections
+    UI -->|HTTP Request| API
+    API -->|Forward Request| QP
+
+    %% Core Layer Internal Connections
+    QP -->|Get Embeddings| ES
+    QP -->|Process Question| RS
+    RS -->|Verify Reasoning| VS
+    ES -->|Store Vectors| VStore
+
+    %% Model Layer Connections
+    ES -->|Embedding Request| ADA
+    RS -->|Forward Reasoning| GPT4
+    RS -->|Generate Answer| GPT4T
+    VS -->|Backward Reasoning| GPT4
+
+    %% Storage Layer Connections
+    VStore -->|Retrieve Similar| RS
+    QStore -->|Store Questions| QP
+    RStore -->|Store Chains| RS
+
+    %% External Service Connections
+    ADA -->|API Call| OpenAI
+    GPT4 -->|API Call| OpenAI
+    GPT4T -->|API Call| OpenAI
+
+    %% Data Flow Annotations
+    QP -->|"1. Process Input"| ES
+    ES -->|"2. Get Embeddings"| VStore
+    VStore -->|"3. Find Similar"| RS
+    RS -->|"4. Forward Logic"| VS
+    VS -->|"5. Verify & Store"| RStore
+
+    classDef primary fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#fff
+    classDef secondary fill:#10b981,stroke:#059669,stroke-width:2px,color:#fff
+    classDef storage fill:#6366f1,stroke:#4f46e5,stroke-width:2px,color:#fff
+    classDef external fill:#f59e0b,stroke:#d97706,stroke-width:2px,color:#fff
+
+    class UI,API primary
+    class QP,ES,RS,VS secondary
+    class VStore,QStore,RStore storage
+    class OpenAI external
+    class GPT4,ADA,GPT4T external
+```
+
 ## 🚀 Key Features
 
 - Forward and backward reasoning paths
