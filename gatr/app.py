@@ -34,6 +34,7 @@ def completion_with_backoff(**kwargs):
 
 class DisasterResponseGRATR:
     def __init__(self, num_agencies: int):
+        print("Subham Test")
         self.num_agencies = num_agencies
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
         self.initialize_graph()
